@@ -25,14 +25,15 @@ static struct gbm_surface* gbm_surf = NULL;
 void setup_opengl(int device, drmModeModeInfo* mode);
 void swap_buffers();
 void draw(float progress);
+void deinit_opengl();
 
 int main()
 {
     char inBuffer[3];
 
     FILE* outfd = fopen("/tmp/drm.log", "w");
-//    outfd = stdout;
-    stdout = outfd;
+    outfd = stdout;
+//    stdout = outfd;
 
     gpu = open("/dev/dri/card0", O_RDWR|O_CLOEXEC);
 
@@ -128,24 +129,22 @@ int main()
                 continue;
             fprintf(outfd, "[%i] %d\n", i, res->crtcs[i]);
         }
-        printf("Select crtc: ");
+        fprintf(outfd,"Select crtc: ");
         fgets(inBuffer, 3, stdin);
         {
             int crtc_num = atoi(inBuffer);
             crtc = drmModeGetCrtc(gpu, res->crtcs[crtc_num]);
+            fprintf(outfd, "Got CRTC successfully\n");
         }
+
+	fflush(outfd);
     }
 
     if(!crtc) {
         fprintf(outfd, "CRTC is not available exit!\n");
+	fflush(outfd);
         return 1;
     }
-
-    setup_opengl(gpu, &mode);
-
-    int i;
-    for (i = 0; i < 6000; i++)
-        draw (i / 6000.0f);
 
     drmModeFreeEncoder(encoder);
     encoder = NULL;
@@ -154,6 +153,19 @@ int main()
     conn = NULL;
 
     drmModeFreeResources(res);
+
+    fprintf(outfd, "Test setup_opengl\n");
+    setup_opengl(gpu, &mode);
+    fprintf(outfd, "OGL initialized\n");
+
+    int i;
+    for (i = 0; i < 600; i++)
+        draw (i / 600.0f);
+
+
+    deinit_opengl();
+
+    drmModeFreeCrtc(crtc);
 
     fflush(outfd);
     sleep(5);
@@ -165,8 +177,11 @@ int main()
 
 void setup_opengl(int device, drmModeModeInfo* mode) {
     gbm_dev = gbm_create_device (device);
+    printf("Got gbm device\n");
     display = eglGetDisplay (gbm_dev);
+    printf("Got egl display %d\n", display);
     eglInitialize (display, NULL, NULL);
+    printf("Init EGL\n");
 
     // create an OpenGL context
     eglBindAPI (EGL_OPENGL_API);
@@ -178,12 +193,15 @@ void setup_opengl(int device, drmModeModeInfo* mode) {
     EGLConfig config;
     EGLint num_config;
     eglChooseConfig (display, attributes, &config, 1, &num_config);
+    printf("EGL config chose\n");
     context = eglCreateContext (display, config, EGL_NO_CONTEXT, NULL);
 
     // create the GBM and EGL surface
-    gbm_surf = gbm_surface_create (gbm_dev, mode->hdisplay, mode->vdisplay, GBM_FORMAT_RGBA8888, GBM_BO_USE_SCANOUT|GBM_BO_USE_RENDERING);
+    gbm_surf = gbm_surface_create (gbm_dev, mode->hdisplay, mode->vdisplay, GBM_BO_FORMAT_XRGB8888, GBM_BO_USE_SCANOUT|GBM_BO_USE_RENDERING);
+    printf("GBM surface created\n");
     surface = eglCreateWindowSurface (display, config, gbm_surf, NULL);
     eglMakeCurrent (display, surface, surface, context);
+    printf("OpenGL setup success\n");
 }
 static struct gbm_bo *previous_bo = NULL;
 static uint32_t previous_fb;
@@ -206,7 +224,16 @@ void swap_buffers() {
 }
 
 void draw(float progress) {
-    glClearColor (1.0f-progress, progress, 0.0, 1.0);
+    glClearColor(1.0f - progress, progress, 0.0, 1.0);
     glClear(GL_COLOR_BUFFER_BIT);
     swap_buffers();
+}
+
+void deinit_opengl() {
+    drmModeRmFB(gpu, previous_fb);
+    gbm_surface_release_buffer(gbm_surf, previous_bo);
+    eglDestroySurface(display, surface);
+    gbm_surface_destroy(gbm_surf);
+    eglDestroyContext(display, context);
+    gbm_device_destroy(gbm_dev);
 }
